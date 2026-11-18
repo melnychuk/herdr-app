@@ -165,12 +165,64 @@ const RECORD: char = '\u{23FA}';
 pub fn is_sprite(text: &str) -> bool {
     let mut chars = text.chars();
     match (chars.next(), chars.next()) {
-        (Some(c), None) => lines(c).is_some() || blocks(c).is_some() || ('\u{2800}'..='\u{28FF}').contains(&c) || ('\u{E0B0}'..='\u{E0BF}').contains(&c) || c == RECORD,
+        (Some(c), None) => lines(c).is_some() || blocks(c).is_some() || ('\u{2800}'..='\u{28FF}').contains(&c) || ('\u{E0B0}'..='\u{E0BF}').contains(&c) || c == RECORD || pie_empty_quarters(text).is_some(),
         _ => false,
     }
 }
 
-/// Paints `text` (one sprite character) into `cell`, snapped to device pixels.
+// Counterclockwise from twelve o'clock, in screen coordinates.
+fn pie_empty_quarters(text: &str) -> Option<usize> {
+    Some(match text {
+        "○" => 4,
+        "◔" => 3,
+        "◑" => 2,
+        "◕" => 1,
+        "●" => 0,
+        _ => return None,
+    })
+}
+
+/// These five circle states can come from different fallback fonts. Draw them
+/// to the same bounds, centered on the primary font's capital letters.
+pub fn paint_pie(text: &str, cell: Bounds<Pixels>, baseline: Pixels, cap_height: Pixels, color: Hsla, window: &mut Window) -> bool {
+    let Some(empty) = pie_empty_quarters(text) else { return false };
+    let (width, height, cap) = (f32::from(cell.size.width), f32::from(cell.size.height), f32::from(cap_height));
+    let radius = (width * 0.42).min(cap * 0.44).min(height * 0.5);
+    if radius <= 0.0 {
+        return true;
+    }
+    let center = cell.origin + point(px(width / 2.0), px((f32::from(baseline) - cap / 2.0).clamp(radius, height - radius)));
+    let stroke = (1.0 / window.scale_factor()).max(radius * 0.18).min(radius * 0.5);
+    let mut path = PathBuilder::fill();
+    pie_arc(&mut path, center, radius, 4, true);
+    path.close();
+    if empty != 0 {
+        pie_arc(&mut path, center, radius - stroke, empty, false);
+        if empty < 4 {
+            path.line_to(center);
+        }
+        path.close();
+    }
+    if let Ok(path) = path.build() {
+        window.paint_path(path, color);
+    }
+    true
+}
+
+fn pie_arc(path: &mut PathBuilder, center: gpui::Point<Pixels>, radius: f32, quarters: usize, clockwise: bool) {
+    const CARDINALS: [(f32, f32); 4] = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)];
+    const K: f32 = 0.552_284_8;
+    let p = |x, y| center + point(px(x * radius), px(y * radius));
+    let at = |i| CARDINALS[(if clockwise { i } else { 4 - i }) % 4];
+    let (x, y) = at(0);
+    path.move_to(p(x, y));
+    for i in 0..quarters {
+        let ((x0, y0), (x1, y1)) = (at(i), at(i + 1));
+        path.cubic_bezier_to(p(x1, y1), p(x0 + K * x1, y0 + K * y1), p(x1 + K * x0, y1 + K * y0));
+    }
+}
+
+/// Paints a cell-sized sprite, snapped to device pixels.
 pub fn paint(text: &str, cell: Bounds<Pixels>, color: Hsla, window: &mut Window) {
     let Some(c) = text.chars().next() else { return };
     let scale = window.scale_factor();

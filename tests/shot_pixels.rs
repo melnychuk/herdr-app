@@ -56,6 +56,17 @@ impl Render for Scene {
                 canvas(
                     |_, _, _| {},
                     |_, _, window, _| {
+                        for (i, glyph) in ["○", "◔", "◑", "◕", "●"].into_iter().enumerate() {
+                            assert!(sprites::is_sprite(glyph));
+                            assert!(sprites::paint_pie(
+                                glyph,
+                                Bounds::new(point(px(4. + i as f32 * 18.), px(32.)), size(px(16.), px(22.))),
+                                px(16.),
+                                px(14.),
+                                rgb(0xffffff).into(),
+                                window,
+                            ));
+                        }
                         for (x, width) in [(110., 9.), (119., 9.5)] {
                             for row in 0..2 {
                                 sprites::paint(
@@ -119,6 +130,27 @@ fn check(window: &mut Window, cx: &mut App) {
                 );
             }
         }
+    }
+    // All five pies have the same outer bounds, centered at baseline minus
+    // half the cap height. Only the expected quadrants change as usage fills.
+    let mut previous = None;
+    for i in 0..5 {
+        let cx = 12. + i as f32 * 18.;
+        let cy = 41.;
+        let sample = |x: f32, y: f32| image.get_pixel((x * scale) as u32, (y * scale) as u32).0;
+        for (quarter, (dx, dy)) in [(2., -2.), (2., 2.), (-2., 2.), (-2., -2.)].into_iter().enumerate() {
+            let expected = if quarter < i { [255, 255, 255, 255] } else { [0x12, 0x34, 0x56, 255] };
+            assert_eq!(sample(cx + dx, cy + dy), expected, "state {i}, quarter {quarter}");
+        }
+        let ink = ((32. * scale) as u32..(54. * scale) as u32)
+            .filter(|&y| image.get_pixel((cx * scale) as u32, y).0[0] > 128)
+            .collect::<Vec<_>>();
+        let bounds = (*ink.first().unwrap(), *ink.last().unwrap());
+        if let Some(prior) = previous {
+            assert_eq!(bounds, prior, "state {i} must not move vertically");
+        }
+        assert!(((bounds.0 + bounds.1) as f32 / 2. + 0.5 - cy * scale).abs() <= 1.0);
+        previous = Some(bounds);
     }
     // Capture must not consume the frame or change the next result.
     assert_eq!(image, window.render_to_image().unwrap());

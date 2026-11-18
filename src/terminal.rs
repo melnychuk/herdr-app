@@ -1789,6 +1789,7 @@ struct CellMetrics {
     /// How far every glyph moves right in its cell, as Ghostty's `renderGlyph` (`glyph_x`).
     glyph_x: Pixels,
     baseline: Pixels,
+    cap_height: Pixels,
     underline: Pixels,
     underline_thickness: Pixels,
     strike: Pixels,
@@ -1850,12 +1851,10 @@ fn font_cell_metrics(ts: &WindowTextSystem, id: FontId, fs: f32, scale: f32, lin
     let baseline = baseline + top;
     let measured_height = |ch| ts.typographic_bounds(id, px(metrics.units_per_em as f32), ch).ok()
         .map(|b| f32::from(b.size.height)).filter(|h| *h > 0.0);
+    let cap = os2.and_then(|o| o.capital_height()).filter(|h| *h > 0).map(|h| h as f32)
+        .or_else(|| measured_height('H')).unwrap_or(ascent * 0.75);
     let ex = os2.and_then(|o| o.x_height()).filter(|h| *h > 0).map(|h| h as f32)
-        .or_else(|| measured_height('x')).unwrap_or_else(|| {
-            let cap = os2.and_then(|o| o.capital_height()).filter(|h| *h > 0).map(|h| h as f32)
-                .or_else(|| measured_height('H')).unwrap_or(ascent * 0.75);
-            cap * 0.75
-        });
+        .or_else(|| measured_height('x')).unwrap_or(cap * 0.75);
     let ul = post.map(|p| p.underline_metrics);
     let st = os2.map(|o| o.strikeout_metrics());
     let ul_thick = ul.filter(|m| m.thickness > 0).map_or(ex * unit * 0.15, |m| m.thickness as f32 * unit);
@@ -1870,6 +1869,7 @@ fn font_cell_metrics(ts: &WindowTextSystem, id: FontId, fs: f32, scale: f32, lin
         size: size(px(width / scale), px(height / scale)),
         glyph_x: px(glyph_x(width, face_width) / scale),
         baseline: px(baseline / scale),
+        cap_height: px(cap * unit / scale),
         underline: px((baseline - ul_pos).round() / scale),
         underline_thickness: px(ul_thick.ceil().max(1.0) / scale),
         strike: px((baseline - st_pos).round() / scale),
@@ -2210,7 +2210,12 @@ fn paint_grid(bounds: Bounds<Pixels>, grid: &Rc<RefCell<Grid>>, focused: bool, w
         for op in ops {
             match op {
                 RowOp::Bg { .. } => {}
-                RowOp::Sprite { x, text, color } => crate::sprites::paint(text, Bounds::new(at(*x, y), cell), *color, window),
+                RowOp::Sprite { x, text, color } => {
+                    let bounds = Bounds::new(at(*x, y), cell);
+                    if !crate::sprites::paint_pie(text, bounds, metrics.baseline, metrics.cap_height, *color, window) {
+                        crate::sprites::paint(text, bounds, *color, window);
+                    }
+                }
                 RowOp::Icon { x, offset, font, glyph, size, color } => {
                     let _ = window.paint_glyph(at(*x, y) + *offset, *font, *glyph, *size, *color);
                 }
@@ -3771,6 +3776,7 @@ mod tests {
                 size: size(px(7.0), px(17.0)),
                 glyph_x: px(glyph_x(7.0 * scale, 7.2 * scale) / scale),
                 baseline: px(13.0),
+                cap_height: px(9.0),
                 underline: px(15.0),
                 underline_thickness: px(1.0),
                 strike: px(9.0),
